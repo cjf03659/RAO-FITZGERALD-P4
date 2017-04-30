@@ -88,12 +88,16 @@ int main(int argc, char * argv[]) {
 		//output redirections
 		else if(argCheck(arg) == 2)
 		{
-			redirIO = true;
-			string out = "";
-			redirects.push_back(arg);
-			ss >> out;
-			redirects.push_back(out);
-			continue;
+			do{
+				if(argCheck(arg) != 2) break;
+				redirIO = true;
+				string out = "";
+				redirects.push_back(arg);
+				ss >> arg;
+				redirects.push_back(arg);
+				//continue;
+			} while(ss >> arg);
+			break;
 		}
 /**
 		else if(arg == ">>")
@@ -160,12 +164,6 @@ int main(int argc, char * argv[]) {
       }
     }
   }
-}
-
-void redirc(string file)
-{
-	int newfd = open(file.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-	dup2(newfd, fileno(stdout));
 }
 
 void nice_exec(vector<string> strargs) {
@@ -333,7 +331,7 @@ void handleIO(vector<string> arg){
   for(unsigned int i =0;i<arg.size();i++){
 		if(arg[i] == ">")
 		{
-			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 			dup2(newfd, STDOUT_FILENO);
 			close(newfd);
 			continue;
@@ -342,7 +340,7 @@ void handleIO(vector<string> arg){
 
 		else if(arg[i] == ">>")
 		{
-			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 			dup2(newfd, STDOUT_FILENO);
 			close(newfd);
 			continue;
@@ -354,7 +352,7 @@ void handleIO(vector<string> arg){
 		{
 			//err = data.at(i+1);
 			//err = data.at(i+1);
-			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 			dup2(newfd, STDERR_FILENO);
 			close(newfd);
 			continue;
@@ -363,7 +361,7 @@ void handleIO(vector<string> arg){
 		else if(arg[i] == "e>>")
 		{
 			//err = data.at(i+1);
-			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 			dup2(newfd, STDERR_FILENO);
 			close(newfd);
 			continue;
@@ -374,7 +372,7 @@ void handleIO(vector<string> arg){
 		else if(arg[i] == "<")
 		{
 			//in = data.at(i+1);
-			int newfd = open(arg[i++].c_str(), O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			int newfd = open(arg[++i].c_str(), O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 			if(newfd < 0) nope_out("Input Redirection");
 			dup2(newfd, STDIN_FILENO);
 			close(newfd);
