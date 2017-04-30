@@ -19,6 +19,27 @@ using namespace std;
 
 const int stdoutfd(dup(fileno(stdout)));
 
+typedef struct process
+{
+	struct process *next; //next process to execute
+	char **argv; //arguments
+	pid_t pid;
+	char completed;
+	char stopped;
+	int status;
+	vector<string> redirects;
+} process;
+
+typedef struct job
+{
+	struct job *next;
+	char *cmd;
+	process *head_process;
+	pid_t pgid;
+	char notified;
+	int in, out, err;
+} job; 
+
 void pipeCommands(vector<vector<string>>,int,bool,vector<string>);
 vector<char *> mk_cstrvec(vector<string> & strvec);
 void dl_cstrvec(vector<char *> & cstrvec);
@@ -31,13 +52,27 @@ void defaultIO();
 void redirc(string file);
 void handleIO(vector<string>);
 int argCheck(string);
+void handleProc(process *, pid_t, int, int, int, int);
+void handleJob(job *, int);
+void wait_for_job(job *);
+void format_job_info(job *, const char *);
+void do_job_notification(void);
+void update_status(void);
+int job_is_stopped(job *);
+int job_is_completed(job *);
+int mark_process_status(pid_t pid, int status);
 
+/**
 struct job{
 	string pstatus;
 	string command;
 	int jid;
 	pid_t pid;
-};
+};*/
+
+
+job *head_job = NULL;
+pid_t shellPID;
 
 vector<job> jobList;
 //{}
@@ -47,6 +82,13 @@ vector<job> jobList;
 //
 
 int main(int argc, char * argv[]) {
+  //determine the process ID of the shell itself
+  shellPID = getpid();
+  //place the shell in a process group by itself
+  if(setpgid(shellPID, shellPID) < 0) nope_out("Shell PID");
+  //give shell terminal control
+  tcsetpgrp(STDIN_FILENO, shellPID);
+
   //defaultSignal();
   while (true){
     //signal(SIGINT, SIG_IGN);
@@ -55,20 +97,17 @@ int main(int argc, char * argv[]) {
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
 	
-    //signal(SIGINT, SIG_IGN);
-    signal(SIGQUIT, SIG_IGN);
-    signal(SIGTSTP, SIG_IGN);
-    signal(SIGTTIN, SIG_IGN);
-    signal(SIGTTOU, SIG_IGN);
-
     change_prompt();
     string input = "", arg;
     stringstream ss;  
     char buffer[1];
     int n;
     vector<string> redirects;
-    vector<string> process;
+    vector<string> processOld;
+    //char **argv
     vector<vector<string>> commands;
+    vector<process> pvect;
+    struct process pbuf;
     //bool bg = false;
     bool redirIO = false;
     while((n = read(STDIN_FILENO,buffer,1)) > 0){
@@ -79,9 +118,13 @@ int main(int argc, char * argv[]) {
     if(input.length() != 0){
       ss << input;
       int pipes = 0;
+      int argc = 0;
       while (ss >> arg) {//symbol checking
 	if(arg == "|"){
-	  commands.push_back(process);
+	  //commands.push_back(process);
+	  pvect.push_back(pbuf);
+	  pbuf = new struct process;
+	  pvect.back()->next = &pbuf;
 	  pipes++;
 	  process.clear();
 	}
@@ -103,8 +146,10 @@ int main(int argc, char * argv[]) {
 	//	bg = true;
 	//if arg == any io redirection symbols change bools?
 	else
+	
 	  process.push_back(arg);
       }
+
       commands.push_back(process);
       if(commands.size() != 0){
 	if(commands[0][0] == "cd"){
@@ -131,6 +176,92 @@ int main(int argc, char * argv[]) {
       }
     }
   }
+}
+
+
+void handleProc(process *p, pid_t pgid, int in, int out, int err, int fg)
+{
+	pid_t pid = getpid();
+	//create new process group if appropriate
+	if(pgid == 0) pgid = pid;
+	setpgid(pid, pgid);
+
+	//handle for/back ground
+	
+//	defaultSignals();
+
+	//handle IO
+	handleIO(p->redirects);
+
+	//execute
+	execvp(p->argv[0], p->argv);
+	perror("execvp");
+	exit(1);
+}
+
+void handleJob(job *jb, int fg)
+{
+	process *p;
+	pid_t pid;
+	int pipefd[2], in, out;
+	in = jb->in;
+
+	//iterate linked list of processes
+	for(p = jb->head_process; p; p = p->next)
+	{
+		if(p->next)
+		{
+			if(pipe(pipefd) < 0)
+			{
+				nope_out("pipe");
+			}
+		out = pipefd[1];
+		} else {
+			out = jb->out;
+		}
+
+		pid = fork();
+		if(pid == 0){
+			handleProc(p, jb->pgid, in, out, jb->err, fg);
+		} else if (pid < 0) {
+			nope_out("fork");
+		} else {
+			p->pid = pid;
+			if(!jb->pgid)
+				jb->pgid = pid;
+			setpgid(pid, jb->pgid);
+		}
+	}
+	if(in != jb->in) close(in);
+	if(out != jb->out) close(out);
+	in = pipefd[0];
+}
+
+job* find_job(pid_t pgid)
+{
+	job *j;
+	for(j = head_job; j; j = j->next)
+		if(j->pgid == pgid)
+			return j;
+	return NULL;
+}
+
+int job_is_stopped(job *j)
+{
+	process *p;
+	for(p = j->head_process; p; p = p->next)
+		if(!p->completed && !p->stopped)
+			return 0;
+	return -1;
+}
+
+int job_is_completed(job *j)
+{
+	process *p;
+	for(p = j->head_process; p; p = p->next)
+		if(!p->completed)
+			return 0;
+	return 1;
 }
 
 void nice_exec(vector<string> strargs) {
@@ -226,14 +357,14 @@ void pipeCommands( vector<vector<string>> vectors, int numPipes, bool redirIO, v
       if(i == 0){
 	pgid = pid;
       }
-
+/**
         //setpgid(pid, pgid);
 	struct job jtemp;
 	jtemp.jid = pgid;
 	jtemp.pid = pid;
 	jtemp.command = vectors[i][0];
 	jobList.push_back(jtemp);
-
+*/
       //close pipes
       for(int j = 0;j<numPipes*2;j++){
 	close(pipefd[j]);
@@ -394,4 +525,128 @@ void defaultIO(){
 	//close(STDERR_FILENO);
 }
 
+void sig_handler(int signo)
+{
+	struct sigaction sigact;
+	//sigact.sa_handler = 
+	//if(signo == SIGABRT)
+}
 
+/* Store the status of the process pid that was returned by waitpid.
+   Return 0 if all went well, nonzero otherwise.  */
+int mark_process_status (pid_t pid, int status)
+{
+  job *j;
+  process *p;
+
+  if (pid > 0)
+    {
+      /* Update the record for the process.  */
+      for (j = head_job; j; j = j->next)
+        for (p = j->head_process; p; p = p->next)
+          if (p->pid == pid)
+            {
+              p->status = status;
+              if (WIFSTOPPED (status))
+                p->stopped = 1;
+              else
+                {
+                  p->completed = 1;
+                  if (WIFSIGNALED (status))
+                    fprintf (stderr, "%d: Terminated by signal %d.\n",
+                             (int) pid, WTERMSIG (p->status));
+                }
+              return 0;
+             }
+      fprintf (stderr, "No child process %d.\n", pid);
+      return -1;
+    }
+  else if (pid == 0 || errno == ECHILD)
+    /* No processes ready to report.  */
+    return -1;
+  else {
+    /* Other weird errors.  */
+    perror ("waitpid");
+    return -1;
+  }
+}
+
+/* Check for processes that have status information available,
+   without blocking.  */
+
+void
+update_status (void)
+{
+  int status;
+  pid_t pid;
+
+  do
+    pid = waitpid (WAIT_ANY, &status, WUNTRACED|WNOHANG);
+  while (!mark_process_status (pid, status));
+}
+
+/* Check for processes that have status information available,
+   blocking until all processes in the given job have reported.  */
+
+void
+wait_for_job (job *j)
+{
+  int status;
+  pid_t pid;
+
+  do
+    pid = waitpid (WAIT_ANY, &status, WUNTRACED);
+  while (!mark_process_status (pid, status)
+         && !job_is_stopped (j)
+         && !job_is_completed (j));
+}
+
+/* Format information about job status for the user to look at.  */
+
+void
+format_job_info (job *j, const char *status)
+{
+  fprintf (stderr, "%ld (%s): %s\n", (long)j->pgid, status, j->cmd);
+}
+
+/* Notify the user about stopped or terminated jobs.
+   Delete terminated jobs from the active job list.  */
+
+void
+do_job_notification (void)
+{
+  job *j, *jlast, *jnext;
+  process *p;
+
+  /* Update status information for child processes.  */
+  update_status ();
+
+  jlast = NULL;
+  for (j = head_job; j; j = jnext)
+    {
+      jnext = j->next;
+
+      /* If all processes have completed, tell the user the job has
+         completed and delete it from the list of active jobs.  */
+      if (job_is_completed (j)) {
+        format_job_info (j, "completed");
+        if (jlast)
+          jlast->next = jnext;
+        else
+          head_job = jnext;
+      //  free_job (j);
+      }
+
+      /* Notify the user about stopped jobs,
+         marking them so that we won't do this more than once.  */
+      else if (job_is_stopped (j) && !j->notified) {
+        format_job_info (j, "stopped");
+        j->notified = 1;
+        jlast = j;
+      }
+
+      /* Don't say anything about jobs that are still running.  */
+      else
+        jlast = j;
+    }
+   }
