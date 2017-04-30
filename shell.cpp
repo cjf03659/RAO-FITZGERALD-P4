@@ -19,7 +19,7 @@ using namespace std;
 
 const int stdoutfd(dup(fileno(stdout)));
 
-void pipeCommands(vector<vector<string>>,int);
+void pipeCommands(vector<vector<string>>,int,bool,vector<string>);
 vector<char *> mk_cstrvec(vector<string> & strvec);
 void dl_cstrvec(vector<char *> & cstrvec);
 void nice_exec(vector<string> args);
@@ -29,26 +29,48 @@ inline void nope_out(const string & sc_name);
 void defaultSignal();
 void defaultIO();
 void redirc(string file);
+void handleIO(vector<string>);
+int argCheck(string);
 
-//struct job {}
+struct job{
+	string pstatus;
+	string command;
+	int jid;
+	pid_t pid;
+};
+
+vector<job> jobList;
+//{}
+//pgid
+//exit status
+//head
+//
 
 int main(int argc, char * argv[]) {
   //defaultSignal();
   while (true){
-    signal(SIGINT, SIG_IGN);
+    //signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
-  
+	
+    //signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+
     change_prompt();
     string input = "", arg;
     stringstream ss;  
     char buffer[1];
     int n;
+    vector<string> redirects;
     vector<string> process;
     vector<vector<string>> commands;
     //bool bg = false;
+    bool redirIO = false;
     while((n = read(STDIN_FILENO,buffer,1)) > 0){
       if(buffer[0] == '\n')
 	break;
@@ -64,32 +86,35 @@ int main(int argc, char * argv[]) {
 	  process.clear();
 	}
 		//output redirections
-		else if(arg == ">")
+		else if(argCheck(arg) == 2)
 		{
-			//out = data.at(i+1);
-			fflush(stdout);
+			redirIO = true;
 			string out = "";
+			redirects.push_back(arg);
 			ss >> out;
-			int newfd = open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-			dup2(newfd, fileno(stdout));
-			close(newfd);
-			//out += " (truncate)";
+			redirects.push_back(out);
+			continue;
 		}
-
+/**
 		else if(arg == ">>")
 		{
-			//out = data.at(i+1);
+			redirIO = true;
 			string out = "";
+			process.push_back(arg);
 			ss >> out;
-			int newfd = open(out.c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-			dup2(newfd, fileno(stdout));
-			//out += " (append)";
+			process.push_back(out);
 		}
 
 		//error redirections
 		else if(arg == "e>")
 		{
 			//err = data.at(i+1);
+			redirIO = true;
+			string out = "";
+			redirects.push_back(arg);
+			ss >> out;
+			redirects.push_back(out);
+			continue;
 		}
 
 		else if(arg == "e>>")
@@ -102,7 +127,7 @@ int main(int argc, char * argv[]) {
 		else if(arg == "<")
 		{
 			//in = data.at(i+1);
-		}
+		}*/
 	//else if (arg == "&")
 	//	bg = true;
 	//if arg == any io redirection symbols change bools?
@@ -130,7 +155,7 @@ int main(int argc, char * argv[]) {
 	  help();
 	}
 	else{
-	  pipeCommands(commands, pipes);
+	  pipeCommands(commands, pipes, redirIO, redirects);
 	}
       }
     }
@@ -197,7 +222,7 @@ void change_prompt(){
   strcat(pathbuf, path.c_str());
   strcat(pathbuf, "$ ");
 
-  defaultIO(); 
+ // defaultIO(); 
   cout.setf(ios::unitbuf);
   string promptStr = string(pathbuf);
   //printf(promptStr.c_str());
@@ -210,11 +235,12 @@ void change_prompt(){
 }
 
 //handle pipes and commands
-void pipeCommands( vector<vector<string>> vectors, int numPipes){
+void pipeCommands( vector<vector<string>> vectors, int numPipes, bool redirIO, vector<string> redirects){
 
   int length = 2*numPipes;
   int * pipefd = new int[length];
   pid_t pid;
+  pid_t pgid;
 
   for(int i =0; i < numPipes; i++){
     if(pipe(pipefd + i*2) == -1) nope_out("pipe");  
@@ -232,33 +258,61 @@ void pipeCommands( vector<vector<string>> vectors, int numPipes){
       if(i!=(vectors.size()-1)){ // if its not last command, dup the output
 	if(dup2(pipefd[(i*2)+1],1) == -1) nope_out("dup2");
       }
+//      if(i == 0){
+//	pgid = pid;
+  //    }
+/**
+      setpgid(pid, pgid);
+	struct job jtemp;
+	jtemp.jid = pgid;
+	jtemp.pid = pid;
+	jtemp.command = vectors[i][0];
+	jobList.push_back(jtemp);
+*/
       //close pipes
       for(int j = 0;j<numPipes*2;j++){
 	close(pipefd[j]);
       }
+
+      if((i == vectors.size()-1) && redirIO){
+	handleIO(redirects);
+      }
+/**
+		if(redirIO) {
+			handleIO(vectors[0]);
+		}
+	
+	for(int c = 0; c < vectors[i].size(); i++){
+		if(argCheck(vectors[i][c]) == 2){
+			vectors[i].erase(vectors[i].begin()+c, vectors[i].begin()+c+1);
+		}
+	}*/
+
       nice_exec(vectors[i]);
     } else { //have the parent wait for status changes
-	
+	waitpid(pid, nullptr, 0);
+/**	
   pid_t wpid;
   int pstatus;
-  defaultIO();
+ // defaultIO();
   
   cout.setf(ios::unitbuf);
-  while((wpid = waitpid(-1, &pstatus, WNOHANG | WUNTRACED | WCONTINUED)) > 0){
+  while((wpid = waitpid(pid, &pstatus, WNOHANG | WUNTRACED | WCONTINUED)) > 0){
 	if(WIFEXITED(pstatus)){
 		cout << wpid << " Exited (" << WEXITSTATUS(pstatus) << ")\n";
-		change_prompt();
+	//	change_prompt();
 	}
 	else if(WIFSTOPPED(pstatus)){
 		int stopsig = WSTOPSIG(pstatus);
 		cout << wpid << " Stopped (" << strsignal(stopsig) << ")\n";
-		change_prompt();
+	//	change_prompt();
 	}
 	else if(WIFCONTINUED(pstatus)){
 		cout << wpid << " Continued \n";
-		change_prompt();
+		//change_prompt();
 	}
   }
+*/
 	}
   }
 
@@ -272,6 +326,89 @@ void pipeCommands( vector<vector<string>> vectors, int numPipes){
 
     
   delete [] pipefd;
+}
+
+void handleIO(vector<string> arg){
+	
+  for(unsigned int i =0;i<arg.size();i++){
+		if(arg[i] == ">")
+		{
+			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDOUT_FILENO);
+			close(newfd);
+			continue;
+			//out += " (truncate)";
+		}
+
+		else if(arg[i] == ">>")
+		{
+			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDOUT_FILENO);
+			close(newfd);
+			continue;
+			//out += " (append)";
+		}
+
+		//error redirections
+		else if(arg[i] == "e>")
+		{
+			//err = data.at(i+1);
+			//err = data.at(i+1);
+			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDERR_FILENO);
+			close(newfd);
+			continue;
+		}
+
+		else if(arg[i] == "e>>")
+		{
+			//err = data.at(i+1);
+			int newfd = open(arg[i++].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDERR_FILENO);
+			close(newfd);
+			continue;
+			//err += " (append)";
+		}
+
+		//input redirections
+		else if(arg[i] == "<")
+		{
+			//in = data.at(i+1);
+			int newfd = open(arg[i++].c_str(), O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			if(newfd < 0) nope_out("Input Redirection");
+			dup2(newfd, STDIN_FILENO);
+			close(newfd);
+			continue;
+		}
+	}
+}
+
+int argCheck(string cmd)
+{
+	string builtins[] = {"cat","grep","more","less", "echo"};
+	string redirects[] = {"<",">",">>","e>", "e>>"};
+	//determine if the argument is an executable program
+	for(string str: builtins)
+	{
+		if(str.compare(cmd) == 0)
+		{
+			return 1;
+		}
+	}
+
+	//determine if th argument is a I/O redirection character
+	for(string str: redirects)
+	{
+		if(str == cmd)
+		{
+			return 2;
+		}
+	}
+
+	//determine if pipe character
+	if(cmd.compare("|") == 0) return 3;
+
+	return 0;
 }
 
 inline void nope_out(const string & sc_name) {
