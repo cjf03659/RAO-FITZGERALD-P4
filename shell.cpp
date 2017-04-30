@@ -99,39 +99,6 @@ int main(int argc, char * argv[]) {
 			} while(ss >> arg);
 			break;
 		}
-/**
-		else if(arg == ">>")
-		{
-			redirIO = true;
-			string out = "";
-			process.push_back(arg);
-			ss >> out;
-			process.push_back(out);
-		}
-
-		//error redirections
-		else if(arg == "e>")
-		{
-			//err = data.at(i+1);
-			redirIO = true;
-			string out = "";
-			redirects.push_back(arg);
-			ss >> out;
-			redirects.push_back(out);
-			continue;
-		}
-
-		else if(arg == "e>>")
-		{
-			//err = data.at(i+1);
-			//err += " (append)";
-		}
-
-		//input redirections
-		else if(arg == "<")
-		{
-			//in = data.at(i+1);
-		}*/
 	//else if (arg == "&")
 	//	bg = true;
 	//if arg == any io redirection symbols change bools?
@@ -256,17 +223,17 @@ void pipeCommands( vector<vector<string>> vectors, int numPipes, bool redirIO, v
       if(i!=(vectors.size()-1)){ // if its not last command, dup the output
 	if(dup2(pipefd[(i*2)+1],1) == -1) nope_out("dup2");
       }
-//      if(i == 0){
-//	pgid = pid;
-  //    }
-/**
-      setpgid(pid, pgid);
+      if(i == 0){
+	pgid = pid;
+      }
+
+        //setpgid(pid, pgid);
 	struct job jtemp;
 	jtemp.jid = pgid;
 	jtemp.pid = pid;
 	jtemp.command = vectors[i][0];
 	jobList.push_back(jtemp);
-*/
+
       //close pipes
       for(int j = 0;j<numPipes*2;j++){
 	close(pipefd[j]);
@@ -275,16 +242,6 @@ void pipeCommands( vector<vector<string>> vectors, int numPipes, bool redirIO, v
       if((i == vectors.size()-1) && redirIO){
 	handleIO(redirects);
       }
-/**
-		if(redirIO) {
-			handleIO(vectors[0]);
-		}
-	
-	for(int c = 0; c < vectors[i].size(); i++){
-		if(argCheck(vectors[i][c]) == 2){
-			vectors[i].erase(vectors[i].begin()+c, vectors[i].begin()+c+1);
-		}
-	}*/
 
       nice_exec(vectors[i]);
     } else { //have the parent wait for status changes
@@ -436,3 +393,5 @@ void defaultIO(){
 	//close(STDOUT_FILENO);
 	//close(STDERR_FILENO);
 }
+
+
