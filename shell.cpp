@@ -28,7 +28,10 @@ typedef struct process
 	char stopped;
 	int status;
 	vector<string> redirects;
+	vector<string> strCmd;
 } process;
+
+struct process fakeproc;
 
 typedef struct job
 {
@@ -51,6 +54,7 @@ void defaultSignal();
 void defaultIO();
 void redirc(string file);
 void handleIO(vector<string>);
+void readIO(vector<string>, int&, int&, int&);
 int argCheck(string);
 void handleProc(process *, pid_t, int, int, int, int);
 void handleJob(job *, int);
@@ -73,6 +77,7 @@ struct job{
 
 job *head_job = NULL;
 pid_t shellPID;
+int shell_terminal;
 
 vector<job> jobList;
 //{}
@@ -84,10 +89,22 @@ vector<job> jobList;
 int main(int argc, char * argv[]) {
   //determine the process ID of the shell itself
   shellPID = getpid();
-  //place the shell in a process group by itself
-  if(setpgid(shellPID, shellPID) < 0) nope_out("Shell PID");
+  //
+  shell_terminal = STDIN_FILENO;
   //give shell terminal control
   tcsetpgrp(STDIN_FILENO, shellPID);
+
+/**
+ vector<string> test;
+ test.push_back("cat");
+ test.push_back("tt.txt");
+ 	struct job tjob;
+  	  vector<char *> cstrargs = mk_cstrvec(test);
+	  fakeproc.argv = &cstrargs.at(0);
+	  tjob.head_process = &fakeproc;
+	  handleJob(&tjob, 1);
+	  exit(1);
+ */
 
   //defaultSignal();
   while (true){
@@ -97,7 +114,10 @@ int main(int argc, char * argv[]) {
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
 	
-    change_prompt();
+    //place the shell in a process group by itself
+    if(setpgid(shellPID, shellPID) < 0) nope_out("Shell PID");
+   
+   change_prompt();
     string input = "", arg;
     stringstream ss;  
     char buffer[1];
@@ -108,6 +128,7 @@ int main(int argc, char * argv[]) {
     vector<vector<string>> commands;
     vector<process> pvect;
     struct process pbuf;
+    struct job jbuf;
     //bool bg = false;
     bool redirIO = false;
     while((n = read(STDIN_FILENO,buffer,1)) > 0){
@@ -119,14 +140,24 @@ int main(int argc, char * argv[]) {
       ss << input;
       int pipes = 0;
       int argc = 0;
+      bool first = true;
       while (ss >> arg) {//symbol checking
 	if(arg == "|"){
-	  //commands.push_back(process);
+	  //commands.push_back(processOld);
+  	  vector<char *> cstrargs = mk_cstrvec(processOld);
+	  pbuf.argv = &cstrargs.at(0);
+	  if(first)
+	  {
+		jbuf.head_process = &pbuf;
+		first = false;
+	  }
 	  pvect.push_back(pbuf);
-	  pbuf = new struct process;
-	  pvect.back()->next = &pbuf;
+	  //pbuf = new process;
+	  pbuf.argv = nullptr;
+	  pvect.back().next = &pbuf;
+	  pbuf.next = nullptr;
 	  pipes++;
-	  process.clear();
+	  processOld.clear();
 	}
 		//output redirections
 		else if(argCheck(arg) == 2)
@@ -147,10 +178,26 @@ int main(int argc, char * argv[]) {
 	//if arg == any io redirection symbols change bools?
 	else
 	
-	  process.push_back(arg);
+	  processOld.push_back(arg);
       }
 
-      commands.push_back(process);
+  	  vector<char *> cstrargs = mk_cstrvec(processOld);
+	  pbuf.argv = &cstrargs.at(0);
+	  pbuf.strCmd = processOld;
+	  if(first)
+	  {
+		jbuf.head_process = &pbuf;
+		first = false;
+	  }
+	  pbuf.next = nullptr;
+      vector<char> temp(input.length() + 1);
+      strcpy(&temp[0], input.c_str());
+      char * commandLine = &temp[0];
+      jbuf.cmd = commandLine;
+
+      readIO(redirects, jbuf.in, jbuf.out, jbuf.err);
+
+      commands.push_back(processOld);
       if(commands.size() != 0){
 	if(commands[0][0] == "cd"){
 	  if(commands[0].size() == 1){
@@ -171,7 +218,9 @@ int main(int argc, char * argv[]) {
 	  help();
 	}
 	else{
-	  pipeCommands(commands, pipes, redirIO, redirects);
+	  //pbuf.argv
+	  //pipeCommands(commands, pipes, redirIO, redirects);
+	  handleJob(&jbuf, 1);
 	}
       }
     }
@@ -186,15 +235,39 @@ void handleProc(process *p, pid_t pgid, int in, int out, int err, int fg)
 	if(pgid == 0) pgid = pid;
 	setpgid(pid, pgid);
 
+	if(fg) tcsetpgrp(shellPID, pgid);
+
 	//handle for/back ground
 	
-//	defaultSignals();
+	defaultSignal();
 
 	//handle IO
-	handleIO(p->redirects);
+	//if(p->redirects != nullptr)
+	//	handleIO(p->redirects);
+	
+	if(in != STDIN_FILENO)
+	{
+		dup2(in, STDIN_FILENO);
+		close(in);
+	}
+	if(out != STDOUT_FILENO)
+	{
+		dup2(out, STDOUT_FILENO);
+		close(out);
+	}
+	if(err != STDERR_FILENO)
+	{
+		dup2(err, STDERR_FILENO);
+		close(err);
+	}
 
 	//execute
-	execvp(p->argv[0], p->argv);
+	//string file = "seg.txt";
+	//int fd = open(file.c_str(), O_RDWR, 0644);
+	//write(fd, p->argv, 1000);
+	//cout << p->argv << endl;
+	nice_exec(p->strCmd);
+	//execvp(p->argv[0], p->argv);
 	perror("execvp");
 	exit(1);
 }
@@ -422,6 +495,63 @@ void handleIO(vector<string> arg){
 			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 			dup2(newfd, STDOUT_FILENO);
 			close(newfd);
+			continue;
+			//out += " (truncate)";
+		}
+
+		else if(arg[i] == ">>")
+		{
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDOUT_FILENO);
+			close(newfd);
+			continue;
+			//out += " (append)";
+		}
+
+		//error redirections
+		else if(arg[i] == "e>")
+		{
+			//err = data.at(i+1);
+			//err = data.at(i+1);
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDERR_FILENO);
+			close(newfd);
+			continue;
+		}
+
+		else if(arg[i] == "e>>")
+		{
+			//err = data.at(i+1);
+			int newfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(newfd, STDERR_FILENO);
+			close(newfd);
+			continue;
+			//err += " (append)";
+		}
+
+		//input redirections
+		else if(arg[i] == "<")
+		{
+			//in = data.at(i+1);
+			int newfd = open(arg[++i].c_str(), O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			if(newfd < 0) nope_out("Input Redirection");
+			dup2(newfd, STDIN_FILENO);
+			close(newfd);
+			continue;
+		}
+	}
+}
+
+
+void readIO(vector<string> arg, int &in, int &out, int &err){
+	
+  for(unsigned int i =0;i<arg.size();i++){
+		if(arg[i] == ">")
+		{
+			int outfd = open(arg[++i].c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			dup2(outfd, STDOUT_FILENO);
+			out = outfd;
+			close(outfd);
 			continue;
 			//out += " (truncate)";
 		}
