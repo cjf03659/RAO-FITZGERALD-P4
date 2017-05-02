@@ -129,6 +129,9 @@ int main(int argc, char * argv[]) {
     vector<process> pvect;
     struct process pbuf;
     struct job jbuf;
+    jbuf.in = STDIN_FILENO;
+    jbuf.out = STDOUT_FILENO;
+    jbuf.err = STDERR_FILENO;
     //bool bg = false;
     bool redirIO = false;
     while((n = read(STDIN_FILENO,buffer,1)) > 0){
@@ -306,8 +309,13 @@ void handleJob(job *jb, int fg)
 		}
 	}
 	if(in != jb->in) close(in);
+	dup2(out, STDOUT_FILENO);
 	if(out != jb->out) close(out);
 	in = pipefd[0];
+	wait_for_job(jb);
+	out = STDOUT_FILENO;
+//	close(in);
+//	close(out);
 }
 
 job* find_job(pid_t pgid)
