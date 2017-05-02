@@ -19,7 +19,7 @@ using namespace std;
 
 const int stdoutfd(dup(fileno(stdout)));
 
-typedef struct process
+struct process
 {
 	struct process *next; //next process to execute
 	char **argv; //arguments
@@ -27,21 +27,22 @@ typedef struct process
 	char completed;
 	char stopped;
 	int status;
-	vector<string> redirects;
 	vector<string> strCmd;
-} process;
+};
 
-struct process fakeproc;
+//struct process fakeproc;
 
-typedef struct job
+struct job
 {
 	struct job *next;
 	char *cmd;
 	process *head_process;
 	pid_t pgid;
 	char notified;
-	int in, out, err;
-} job; 
+	int in = STDIN_FILENO;
+	int out = STDOUT_FILENO;
+	int err = STDERR_FILENO;
+}; 
 
 void pipeCommands(vector<vector<string>>,int,bool,vector<string>);
 vector<char *> mk_cstrvec(vector<string> & strvec);
@@ -66,25 +67,11 @@ int job_is_stopped(job *);
 int job_is_completed(job *);
 int mark_process_status(pid_t pid, int status);
 
-/**
-struct job{
-	string pstatus;
-	string command;
-	int jid;
-	pid_t pid;
-};*/
-
-
 job *head_job = NULL;
 pid_t shellPID;
 int shell_terminal;
 
 vector<job> jobList;
-//{}
-//pgid
-//exit status
-//head
-//
 
 int main(int argc, char * argv[]) {
   //determine the process ID of the shell itself
@@ -127,11 +114,8 @@ int main(int argc, char * argv[]) {
     //char **argv
     vector<vector<string>> commands;
     vector<process> pvect;
-    struct process pbuf;
-    struct job jbuf;
-    jbuf.in = STDIN_FILENO;
-    jbuf.out = STDOUT_FILENO;
-    jbuf.err = STDERR_FILENO;
+    process* pbuf = new process();
+    job* jbuf = new job();
     //bool bg = false;
     bool redirIO = false;
     while((n = read(STDIN_FILENO,buffer,1)) > 0){
@@ -147,18 +131,20 @@ int main(int argc, char * argv[]) {
       while (ss >> arg) {//symbol checking
 	if(arg == "|"){
 	  //commands.push_back(processOld);
+	  process* pipeProc = new process();
   	  vector<char *> cstrargs = mk_cstrvec(processOld);
-	  pbuf.argv = &cstrargs.at(0);
+	  pipeProc->argv = &cstrargs.at(0);
 	  if(first)
 	  {
-		jbuf.head_process = &pbuf;
+		jbuf->head_process = pipeProc;
 		first = false;
 	  }
-	  pvect.push_back(pbuf);
-	  //pbuf = new process;
-	  pbuf.argv = nullptr;
-	  pvect.back().next = &pbuf;
-	  pbuf.next = nullptr;
+	  pipeProc->next = pbuf;
+	  pvect.push_back(*pipeProc);
+	  //process* pbuf = new process();
+	 // pbuf.argv = nullptr;
+	  //pvect.back().next = pbuf;
+	  //pbuf->next = nullptr;
 	  pipes++;
 	  processOld.clear();
 	}
@@ -185,20 +171,23 @@ int main(int argc, char * argv[]) {
       }
 
   	  vector<char *> cstrargs = mk_cstrvec(processOld);
-	  pbuf.argv = &cstrargs.at(0);
-	  pbuf.strCmd = processOld;
+	  pbuf->argv = &cstrargs.at(0);
+	  pbuf->strCmd = processOld;
 	  if(first)
 	  {
-		jbuf.head_process = &pbuf;
+		jbuf->head_process = pbuf;
 		first = false;
 	  }
-	  pbuf.next = nullptr;
+	  pbuf->next = nullptr;
       vector<char> temp(input.length() + 1);
       strcpy(&temp[0], input.c_str());
       char * commandLine = &temp[0];
-      jbuf.cmd = commandLine;
+      jbuf->cmd = commandLine;
 
-      readIO(redirects, jbuf.in, jbuf.out, jbuf.err);
+      if(redirIO) {
+      		readIO(redirects, jbuf->in, jbuf->out, jbuf->err);
+		redirIO = !redirIO;
+	}
 
       commands.push_back(processOld);
       if(commands.size() != 0){
@@ -223,7 +212,9 @@ int main(int argc, char * argv[]) {
 	else{
 	  //pbuf.argv
 	  //pipeCommands(commands, pipes, redirIO, redirects);
-	  handleJob(&jbuf, 1);
+	  handleJob(jbuf, 1);
+	  job* jbuf = new job();
+	  process* pbuf = new process();
 	}
       }
     }
@@ -277,6 +268,7 @@ void handleProc(process *p, pid_t pgid, int in, int out, int err, int fg)
 
 void handleJob(job *jb, int fg)
 {
+	defaultIO();
 	process *p;
 	pid_t pid;
 	int pipefd[2], in, out;
@@ -309,11 +301,12 @@ void handleJob(job *jb, int fg)
 		}
 	}
 	if(in != jb->in) close(in);
-	dup2(out, STDOUT_FILENO);
+	//dup2(out, STDOUT_FILENO);
 	if(out != jb->out) close(out);
 	in = pipefd[0];
+	defaultIO();
 	wait_for_job(jb);
-	out = STDOUT_FILENO;
+	//out = STDOUT_FILENO;
 //	close(in);
 //	close(out);
 }
