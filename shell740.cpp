@@ -44,7 +44,7 @@ typedef struct job
   int in, out, err;
 } job; 
 
-void pipeCommands(vector<vector<string>>,bool);
+void pipeCommands(vector<vector<string>>,bool, vector<string>, bool);
 vector<char *> mk_cstrvec(vector<string> & strvec);
 void dl_cstrvec(vector<char *> & cstrvec);
 void nice_exec(vector<string> args);
@@ -309,7 +309,7 @@ int main(int argc, char * argv[]) {
 	  //pipeCommands(commands, pipes, redirIO, redirects);
 	  if(!bg){
 	    //handleJob(&jbuf, 0);
-	    pipeCommands(commands,bg);
+	    pipeCommands(commands,bg, redirects, readIO);
 	  }/*
 	  else if(bg){
 	  //jobList.push_back(jbuf);
@@ -507,7 +507,7 @@ void change_prompt(){
 }
 
 //handle pipes and commands
-void pipeCommands( vector<vector<string>> commands, bool bg){
+void pipeCommands( vector<vector<string>> commands, bool bg, vector<string> redirects, bool readIO){
   pid_t pgid, pid;
   int status;
   vector<array<int, 2>> pipes;
@@ -590,9 +590,15 @@ void pipeCommands( vector<vector<string>> commands, bool bg){
 	    {
 	      close_pipe(pipes.at(i).data());
 	    } // for
+
+	  if((i == commands.size()-1) && readIO){
+		handleIO(redirects);
+	//	cout << "redirected" << endl;
+	  }
+
 	  nice_exec(commands.at(i));
-	  dup2(backupIn,STDIN_FILENO);
-	  dup2(backupOut,STDOUT_FILENO);
+	 // dup2(backupIn,STDIN_FILENO);
+	  //dup2(backupOut,STDOUT_FILENO);
 	} // end if in child process
       else //in parent process
 	{
