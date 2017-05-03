@@ -75,6 +75,9 @@ job * find_job (pid_t pgid);
 void updateJobs(int pid);
 void update_status(pid_t pgid, string status);
 void close_pipe(int pipefd [2]);
+void bg(pid_t);
+void killBuiltin(vector<string>);
+
 /**
    struct job{
    string pstatus;
@@ -84,7 +87,7 @@ void close_pipe(int pipefd [2]);
    };*/
 
 
-job *head_job = NULL;
+//struct job *head_job = NULL;
 pid_t shellPID;
 int shell_terminal;
 vector<job> jobList;
@@ -145,8 +148,10 @@ int main(int argc, char * argv[]) {
     jbuf.in = STDIN_FILENO;
     jbuf.out = STDOUT_FILENO;
     jbuf.err = STDERR_FILENO;
+    bool paranOpen = false;
     bool bg = false;
     bool redirIO = false;
+    int quote = 0; //0 none 1 hanging 2 closed
     while((n = read(STDIN_FILENO,buffer,1)) > 0){
       if(buffer[0] == '\n')
 	break;
@@ -158,6 +163,7 @@ int main(int argc, char * argv[]) {
       int argc = 0;
       bool first = true;
       while (ss >> arg) {//symbol checking
+        
 	if (arg == "&"){
 	  bg = true;
 	  cout << "& detected" << endl;
@@ -181,25 +187,48 @@ int main(int argc, char * argv[]) {
 	  pipes++;
 	  processOld.clear();
 	}
-	//output redirections
+/**
+	else if(arg == '"')
+		{
+		while(quote != 3) {
+		if(paranOpen)
+		{
+			offset++;
+			paranOpen = false;
+			continue;
+		}
 	
+		paranOpen = true;
+
+		int end = 1;
+		int begin = i;
+		do {				
+			if(line.at(end-1) == '\\')
+			{
+				line.erase(end-1,1);
+				begin = end;
+			}
+		end = line.find('"', begin+1);
+	} while(line.at(end-1) == '\\');
+	//output redirections
+*/	
 	  else if(argCheck(arg) == 2)
 	  {
+	  	redirIO = true;
 	  do{
-	  if(argCheck(arg) != 2) break;
-	  redirIO = true;
-	  string out = "";
-	  redirects.push_back(arg);
-	  ss >> arg;
-	  redirects.push_back(arg);
-	  //continue;
-	  } while(ss >> arg);
+		  if(argCheck(arg) != 2) break;
+	//	  redirIO = true;
+	 	 string out = "";
+	  	redirects.push_back(arg);
+	 	 ss >> arg;
+	 	 redirects.push_back(arg);
+	  	} while(ss >> arg);
 	  break;
 	  }
 	  //else if (arg == "&")
 	  //	bg = true;
 	  //if arg == any io redirection symbols change bools?
-	else
+	else {
 	
 	  processOld.push_back(arg);
       }
@@ -242,6 +271,9 @@ int main(int argc, char * argv[]) {
 	else if(commands[0][0] == "help"){
 	  help();
 	}
+	else if(commands[0][0] == "kill"){
+	  killBuiltin(commands[0]);
+	}
 	else if(commands[0][0] == "jobs"){
 	  printjobs(jobList);
 	}
@@ -249,6 +281,44 @@ int main(int argc, char * argv[]) {
 	  if(commands[0].size() < 2)
 	    cout <<"bg: file JID must be specified" << endl;
 	  else{
+	    int tempjid;
+	    try{
+	      tempjid = stoi(commands[0][1]);
+	    }
+	    catch (const std::invalid_argument& e){
+	      cout << "must be number" <<endl;
+	    }
+	    //cout << tempjid << endl;
+	    //for job vector iteration, search each job
+	    //struct for the matching pid
+	    //
+	    //call put_job_in_background(matching job, true ?
+	    job* j = find_job(tempjid);
+	    put_job_in_background(j,0);
+	  }
+	}
+	else if(commands[0][0] == "fg"){
+	  if(commands[0].size() < 2)
+	    cout <<"fg: file JID must be specified" << endl;
+	  else{
+	    int tempjid = stoi(commands[0][1]);
+	    cout << tempjid << endl;
+	    //for job vector iteration, search each job
+	    //struct for the matching pid
+	    //
+	    //call put_job_in_background(matching job, true ?)
+	    job* j = find_job(tempjid);
+	    continue_job(j,0);
+	  }
+	}
+	else if(commands[0][0] == "export"){
+	  string str= "";
+	  string name = "";
+	  string word = "";
+	  if(commands[0].size() < 2)
+	    cout << "export command: export  NAME[=WORD]" << endl;
+	  else{
+	    str = commands[0][1];
 	    int tempjid;
 	    try{
 	      tempjid = stoi(commands[0][1]);
@@ -307,23 +377,67 @@ int main(int argc, char * argv[]) {
 	else{
 	  //pbuf.argv
 	  //pipeCommands(commands, pipes, redirIO, redirects);
-	  if(!bg){
 	    //handleJob(&jbuf, 0);
 	    pipeCommands(commands,bg, redirects, readIO);
-	  }/*
-	  else if(bg){
-	  //jobList.push_back(jbuf);
-	  put_job_in_background(&jobList.at(count), -1);
-	  count++;
 	  }
-	   */
-
 	}
       }
     }
   }
 }
 
+void bgBuiltin(pid_t jid)
+{
+  for (auto entry = jobList.begin(); entry != jobList.end(); entry++) 
+    {
+      job &job = *entry; 
+      
+      if (job.pgid != jid)
+	{
+	  continue; 
+	} 
+      else 
+	{
+	 // job.status = status;
+	 // pipeCommands(j.command`
+	 kill(job.pgid, SIGCONT);
+	  //printf("UPDATE: [%d] %s %s\n", job.groupid, job.input.c_str(), job.running.c_str());
+	}
+    }
+    //mark_job_as_running (jid);
+    //put_job_in_background (jid, 1);
+}
+
+void killBuiltin(vector<string> args)
+{
+	int signal = SIGTERM;
+//	for(int i = 0; i < (args.size()-1); i++)
+        bool sigpassed = false;
+	for(string str: args)
+	{
+		if(str == "-s")
+		{
+			sigpassed = true;
+			continue;
+		}
+		if(sigpassed)
+		{
+			for(int c = 0; c < 34; c++)
+			{
+				if(strsignal(c) == args)
+				{
+					signal = c;
+				}
+			}
+		}
+
+	}
+	string strPID = args.at(args.size() - 1);
+	cout << strPID << endl;
+	pid_t pid = stoi(strPID);
+
+	kill(pid, signal);
+}
 
 void handleProc(process *p, pid_t pgid, int in, int out, int err, int fg)
 {
@@ -352,6 +466,8 @@ void handleProc(process *p, pid_t pgid, int in, int out, int err, int fg)
       dup2(out, STDOUT_FILENO);
       close(out);
     }
+  if(err != STDERR_FILENO)
+    {}
   if(err != STDERR_FILENO)
     {
       dup2(err, STDERR_FILENO);
@@ -416,7 +532,7 @@ void handleJob(job *jb, int fg)
 job* find_job(pid_t pgid)
 {
   job *j;
-  for(j = head_job; j; j = j->next)
+  //for(j = head_job; j; j = j->next)
     if(j->pgid == pgid)
       return j;
   return NULL;
@@ -846,7 +962,7 @@ int mark_process_status (pid_t pid, int status)
   if (pid > 0)
     {
       /* Update the record for the process.  */
-      for (j = head_job; j; j = j->next)
+    //  for (j = head_job; j; j = j->next)
         for (p = j->head_process; p; p = p->next)
           if (p->pid == pid)
             {
@@ -916,44 +1032,6 @@ format_job_info (job *j, const char *status)
 /* Notify the user about stopped or terminated jobs.
    Delete terminated jobs from the active job list.  */
 
-void
-do_job_notification (void)
-{
-  job *j, *jlast, *jnext;
-  process *p;
-
-  /* Update status information for child processes.  */
-  update_status ();
-
-  jlast = NULL;
-  for (j = head_job; j; j = jnext)
-    {
-      jnext = j->next;
-
-      /* If all processes have completed, tell the user the job has
-         completed and delete it from the list of active jobs.  */
-      if (job_is_completed (j)) {
-        format_job_info (j, "completed");
-        if (jlast)
-          jlast->next = jnext;
-        else
-          head_job = jnext;
-	//  free_job (j);
-      }
-
-      /* Notify the user about stopped jobs,
-         marking them so that we won't do this more than once.  */
-      else if (job_is_stopped (j) && !j->notified) {
-        format_job_info (j, "stopped");
-        j->notified = 1;
-        jlast = j;
-      }
-
-      /* Don't say anything about jobs that are still running.  */
-      else
-        jlast = j;
-    }
-}
 
 void
 mark_job_as_running (job *j)
@@ -997,8 +1075,6 @@ void put_job_in_foreground (job *j, int cont)
   /* Wait for it to report.  */
   wait_for_job (j);
 
-  /* Put the shell back in the foreground.  */
-  tcsetpgrp (shell_terminal, shellPID);
 
   /* Restore the shell’s terminal modes.  */
   //tcgetattr (shell_terminal, &j->tmodes);
